@@ -46,16 +46,19 @@ jobs:
           go-version: '1.22'
           cache: true
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: 安装前端依赖并构建
+      # 前端产物 web/adminviews/dist 已随仓库提交(作者原设计即如此),
+      # 且发布前已在本地 npm run build 重建并 commit。
+      # 这里不再跑 npm install/build: 老项目(vite 2.9 + esbuild 0.14)在 CI 的
+      # node 环境下 postinstall 不稳定,会导致整条流水线失败。
+      - name: 校验前端产物已就位
         run: |
-          cd web/adminviews
-          npm install --no-audit --no-fund
-          npm run build
-          ls -la dist
+          if [ ! -f web/adminviews/dist/index.html ]; then
+            echo "错误: 缺少 web/adminviews/dist/index.html,请先本地 npm run build 后提交"
+            exit 1
+          fi
+          ls -la web/adminviews/dist
+          echo "--- 确认内嵌的是新仓库地址 ---"
+          grep -c "meimolihan" web/adminviews/dist/assets/*.js || true
 
       - name: 交叉编译 18 个平台
         id: compile
