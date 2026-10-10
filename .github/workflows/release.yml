@@ -1,0 +1,175 @@
+name: Release Pipeline
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要构建的标签 (例如: v2.28.2)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref_name || github.event.inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ github.ref_name || github.event.inputs.tag }}
+
+jobs:
+  build-binaries:
+    name: 编译全平台二进制 (18 个架构 + 内置前端)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      count: ${{ steps.compile.outputs.count }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'push' && github.ref || format('refs/tags/{0}', github.event.inputs.tag) }}
+
+      - name: Validate tag format
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          if [[ ! "${{ github.event.inputs.tag }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+.*$ ]]; then
+            echo "错误: 标签格式无效，必须以 'v' 开头，例如: v2.28.2"
+            exit 1
+          fi
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 安装前端依赖并构建
+        run: |
+          cd web/adminviews
+          npm install --no-audit --no-fund
+          npm run build
+          ls -la dist
+
+      - name: 交叉编译 18 个平台
+        id: compile
+        run: |
+          set -e
+          VER_NUM="${RELEASE_TAG#v}"
+          OUTDIR="dist-release"
+          mkdir -p "${OUTDIR}"
+          export CGO_ENABLED=0
+          export GOFLAGS="-mod=mod"
+
+          # 平台表: 输出名后缀 | GOOS | GOARCH | GOARM | GOMIPS
+          # 命名与上游 v2.27.2 Release 资产保持一致
+          PLATFORMS="
+          darwin_arm64|darwin|arm64|||
+          darwin_x86_64|darwin|amd64|||
+          freebsd_arm64|freebsd|arm64|||
+          freebsd_i386|freebsd|386|||
+          freebsd_x86_64|freebsd|amd64|||
+          Linux_arm64|linux|arm64|||
+          Linux_armv5|linux|arm|5||
+          Linux_armv6|linux|arm|6||
+          Linux_armv7|linux|arm|7||
+          Linux_i386|linux|386|||
+          Linux_mipsle_hardfloat|linux|mipsle||hardfloat
+          Linux_mipsle_softfloat|linux|mipsle||softfloat
+          Linux_mips_hardfloat|linux|mips||hardfloat
+          Linux_mips_softfloat|linux|mips||softfloat
+          Linux_riscv64|linux|riscv64|||
+          Linux_x86_64|linux|amd64|||
+          Windows_i386|windows|386|||
+          Windows_x86_64|windows|amd64|||
+          "
+
+          COUNT=0
+          while IFS='|' read -r name goos goarch goarm gomips; do
+            [[ -z "${name}" ]] && continue
+            COUNT=$((COUNT + 1))
+            bin="lucky"
+            [[ "${goos}" == "windows" ]] && bin="lucky.exe"
+            printf "[%2d/18] %-26s (%s/%s)\n" "${COUNT}" "${name}" "${goos}" "${goarch}"
+            rm -f "${bin}"
+            env GOOS="${goos}" GOARCH="${goarch}" GOARM="${goarm}" GOMIPS="${gomips}" \
+              go build -tags "adminweb nomsgpack" \
+                -ldflags "-s -w -X main.version=${RELEASE_TAG}" \
+                -o "${bin}" .
+            tar czf "${OUTDIR}/lucky_${VER_NUM}_${name}.tar.gz" "${bin}"
+            rm -f "${bin}"
+          done <<< "${PLATFORMS}"
+
+          echo "count=${COUNT}" >> "$GITHUB_OUTPUT"
+
+      - name: 计算 sha256
+        run: |
+          cd dist-release
+          sha256sum lucky_*.tar.gz > sha256sums.txt
+          cat sha256sums.txt
+
+      - name: Upload binaries as artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: lucky-binaries
+          path: |
+            dist-release/*.tar.gz
+            dist-release/sha256sums.txt
+          if-no-files-found: error
+
+  publish-release:
+    name: 发布 Release (附带 18 个平台二进制)
+    needs: build-binaries
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'push' && github.ref || format('refs/tags/{0}', github.event.inputs.tag) }}
+
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: lucky-binaries
+          path: dist-release
+
+      - name: Prepare release body
+        run: |
+          {
+            # 优先用仓库里的 RELEASE_NOTES.md（由 scripts/build-and-push.sh -m 写入）
+            if [ -f RELEASE_NOTES.md ]; then
+              cat RELEASE_NOTES.md
+            else
+              echo "## 更新内容"
+              echo "1. 移除管理界面内全部广告位与推广内容。"
+              echo "2. 全局版本号更新至 ${{ env.RELEASE_TAG }}。"
+              echo "3. 开源仓库地址统一变更为 https://github.com/${{ github.repository }}"
+            fi
+            echo ""
+            echo "## 构建说明"
+            echo "- ${{ needs.build-binaries.outputs.count }} 个平台二进制由本仓库源码真实交叉编译产出，版本号内嵌于二进制。"
+            echo "- 前端已重新构建并内嵌（go:embed）。"
+            echo ""
+            echo "## SHA256 校验值"
+            echo ""
+            echo '```'
+            cat dist-release/sha256sums.txt
+            echo '```'
+          } > _release_body.md
+
+      - name: Create / update Release with binaries
+        run: |
+          TAG="${{ env.RELEASE_TAG }}"
+          gh release delete "$TAG" --yes 2>/dev/null || true
+          gh release create "$TAG" \
+            --title "Lucky $TAG" \
+            --notes-file _release_body.md \
+            dist-release/lucky_*.tar.gz
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
