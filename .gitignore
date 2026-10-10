@@ -24,3 +24,8 @@ lucky.conf
 # vendor/
 /dist/
 config.json
+
+# 构建产物(由 scripts/build_v2.28.2.sh 生成,不入库)
+dist-release/
+# 误提交的 UPX 加壳产物
+goports

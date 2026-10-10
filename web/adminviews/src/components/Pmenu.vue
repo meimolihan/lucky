@@ -281,7 +281,7 @@ function handleSelect(key, keyPath, item, routeResult) {
                 })
             break;
         case "#logo":
-            //window.open("https://github.com/gdy666/lucky", "_blank");
+            //window.open("https://github.com/meimolihan/lucky", "_blank");
             location.hash = "#about"
             break;
         default:

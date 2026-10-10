@@ -63,7 +63,8 @@ import SSL from './components/SSL.vue'
 
 const global:any = inject("global")
 
-const version = ref("0.0.0")
+// 兜底版本号:接口 /version 未返回时的默认显示,正式版本由后端 -ldflags -X main.version 注入
+const version = ref("2.28.2")
 
 const queryVersion = ()=>{
   apiGetVersion().then((res) => {

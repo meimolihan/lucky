@@ -27,11 +27,11 @@
         </div>
 
         <div class="line">
-             Github&nbsp;&nbsp;<el-link type="primary" href="https://github.com/gdy666/lucky" target="_blank">https://github.com/gdy666/lucky</el-link>
+             Github&nbsp;&nbsp;<el-link type="primary" href="https://github.com/meimolihan/lucky" target="_blank">https://github.com/meimolihan/lucky</el-link>
         </div>
 
         <div class="line">
-             Gitee&nbsp;&nbsp;<el-link type="primary" href="https://gitee.com/gdy666/lucky" target="_blank">https://gitee.com/gdy666/lucky</el-link>
+             仓库&nbsp;&nbsp;<el-link type="primary" href="https://github.com/meimolihan/lucky" target="_blank">https://github.com/meimolihan/lucky</el-link>
         </div>
 
         <div>
@@ -55,7 +55,8 @@ import {MessageShow} from '../utils/ui'
 
 var Info = ref({
     AppName:"Lucky",
-    Version:"1.0.0",
+    // 兜底版本号:接口 /api/info 未返回时的默认显示,正式版本由后端 -ldflags -X main.version 注入
+    Version:"2.28.2",
     OS:"unknow",
     ARCH:"unknow",
     Date:"2022-07-25",
