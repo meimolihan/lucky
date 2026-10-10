@@ -124,6 +124,16 @@ Lucky 的核心程序完全采用 Golang 实现，具有高效、稳定、跨平
   可选参数：`-p 端口`（默认 16601）、`-d 安装目录`（默认 `/etc/lucky`）、`-v 版本`（默认 latest）、`-y` 免交互。
   重装/升级直接再执行一次即可，`lucky.conf` 配置会保留。
 
+- 彻底卸载（同一脚本）：
+
+  ```bash
+  bash -c "$(curl -sSL https://raw.githubusercontent.com/meimolihan/lucky/master/scripts/install.sh)" --uninstall -y
+  ```
+
+  会停止并禁用 systemd 服务、删除服务单元与安装目录、回收防火墙端口；
+  `lucky.conf` 先备份到 `/root/lucky-uninstall-backup-<时间戳>/`，确认无需回滚后再手动删除。
+  当初若用 `-d` 指定过安装目录，卸载时需同样传入 `-d`。
+
 
 ## OpenwrtIPK包安装
 
@@ -205,6 +215,7 @@ Lucky 的核心程序完全采用 Golang 实现，具有高效、稳定、跨平
       3. 开源仓库地址统一变更为 https://github.com/meimolihan/lucky
       4. 新增 Linux 一键安装脚本 scripts/install.sh（自动识别架构，安装为 systemd 服务）。
       5. Docker 镜像名统一变更为 mobufan/lucky，新增 scripts/docker-build-push.sh。
+      6. install.sh 支持 --uninstall 彻底卸载（配置自动备份，可回收防火墙端口）。
 
     2026-02-01 v2.27.2
       1. 重构并优化文件服务/WebDav 前端显示。

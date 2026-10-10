@@ -9,6 +9,9 @@ bash -c "$(curl -sSL https://raw.githubusercontent.com/meimolihan/lucky/master/s
 可选参数：`-p 端口`（默认 16601）、`-d 安装目录`（默认 /etc/lucky）、`-v 版本`、`-y` 免交互。
 重装/升级再执行一次即可，`lucky.conf` 配置保留。
 
+彻底卸载：`bash -c "$(curl -sSL https://raw.githubusercontent.com/meimolihan/lucky/master/scripts/install.sh)" --uninstall -y`
+（停服 → 删服务单元与安装目录 → 回收防火墙端口；`lucky.conf` 先备份到 `/root/lucky-uninstall-backup-<时间戳>/`）
+
 ## Docker
 
 镜像名：`mobufan/lucky`（标签 `latest` 与 `v2.28.2`）

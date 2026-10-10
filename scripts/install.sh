@@ -81,6 +81,7 @@ PORT=""
 INSTALL_DIR=""
 WANT_VERSION="${LUCKY_VERSION:-}"
 INSTALL_YES=0
+DO_UNINSTALL=0
 
 # ===================== GitHub 下载加速镜像 =====================
 # 原始 GitHub 地址失败时按序尝试（末尾必须带斜杠）
@@ -119,6 +120,128 @@ make_url_candidates() {
   done
 }
 
+# ===================== 卸载 =====================
+# 回收防火墙端口（卸载时调用，与 open_firewall_port 反向对应）
+close_firewall_port() {
+  local P="$1"
+  if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+    firewall-cmd --permanent --remove-port="${P}/tcp" >/dev/null 2>&1 || true
+    firewall-cmd --reload >/dev/null 2>&1 || true
+    ok "已从 ${gl_bai}firewalld${reset} 移除端口 ${gl_lan}${P}/tcp${reset}"
+    return 0
+  fi
+  if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+    ufw delete allow "${P}/tcp" >/dev/null 2>&1 || true
+    ok "已从 ${gl_bai}ufw${reset} 移除端口 ${gl_lan}${P}/tcp${reset}"
+    return 0
+  fi
+  if command -v iptables >/dev/null 2>&1; then
+    if iptables -C INPUT -p tcp --dport "${P}" -j ACCEPT >/dev/null 2>&1; then
+      iptables -D INPUT -p tcp --dport "${P}" -j ACCEPT >/dev/null 2>&1 || true
+      ok "已从 ${gl_bai}iptables${reset} 移除端口 ${gl_lan}${P}/tcp${reset}"
+      return 0
+    fi
+  fi
+  skip "未检测到需回收的防火墙规则"
+}
+
+# 彻底卸载：停服务 → 禁自启 → 删 systemd 单元 → 备份配置 → 删安装目录 → 回收端口
+do_uninstall() {
+  local ts backup_dir conf_port
+
+  print_banner
+  sep_line
+  section "卸载信息"
+  printf "  %-14s %s\n" "${gl_lan}安装目录${reset}" "${gl_bai}${INSTALL_DIR}${reset}"
+  printf "  %-14s %s\n" "${gl_lan}服务单元${reset}" "${gl_bai}${SERVICE_FILE}${reset}"
+  sep_line
+
+  if [ ! -d "${INSTALL_DIR}" ] && [ ! -f "${SERVICE_FILE}" ]; then
+    warn "未发现 ${APP_NAME} 安装痕迹（${INSTALL_DIR} 与 ${SERVICE_FILE} 均不存在），无需卸载"
+    exit 0
+  fi
+
+  ts="$(date +%Y%m%d%H%M%S)"
+  backup_dir="/root/${APP_NAME}-uninstall-backup-${ts}"
+
+  # 危险路径保护：安装目录只能是具体的程序目录
+  case "${INSTALL_DIR}" in
+    ""|"/"|"/bin"|"/boot"|"/etc"|"/home"|"/root"|"/usr"|"/var"|"/opt")
+      error "拒绝删除危险路径：${INSTALL_DIR}（如需卸载请显式 -d 指定 lucky 安装目录）"
+      ;;
+  esac
+
+  printf "  %s\n" "${gl_huang}[警告]${reset} 即将删除 ${gl_bai}${INSTALL_DIR}${reset} 与 systemd 服务，配置会先备份到 ${gl_bai}${backup_dir}${reset}"
+  if [ "${INSTALL_YES}" != "1" ]; then
+    read -r -p "  确认卸载？请输入 ${gl_hong}yes${reset} 继续: " _c
+    [ "${_c}" = "yes" ] || { warn "已取消卸载，未做任何改动"; exit 0; }
+  fi
+
+  # 1) 停止并禁用服务
+  section "停止并移除服务"
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl stop "${APP_NAME}" >/dev/null 2>&1 || true
+    systemctl disable "${APP_NAME}" >/dev/null 2>&1 || true
+    ok "已停止并禁用 ${APP_NAME} 服务"
+  else
+    skip "无 systemd，跳过服务停止"
+  fi
+  # 兜底：结束可能残留的后台进程（无 systemd 时的 nohup 模式）
+  if command -v pkill >/dev/null 2>&1 && [ -x "${BIN_PATH}" ]; then
+    pkill -f "${BIN_PATH}" >/dev/null 2>&1 || true
+    skip "已结束残留进程"
+  fi
+
+  # 2) 删除 systemd 单元
+  if [ -f "${SERVICE_FILE}" ]; then
+    rm -f "${SERVICE_FILE}" || error "删除服务单元失败：${SERVICE_FILE}"
+    ok "已删除 ${gl_bai}${SERVICE_FILE}${reset}"
+  else
+    skip "systemd 单元不存在，跳过"
+  fi
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    systemctl reset-failed >/dev/null 2>&1 || true
+    ok "已刷新 systemd 配置"
+  fi
+
+  # 3) 备份配置（端口转发/DDNS/反代规则全在 lucky.conf 内）
+  section "备份配置"
+  mkdir -p "${backup_dir}" || true
+  if [ -f "${CONF_FILE}" ]; then
+    cp -a "${CONF_FILE}" "${backup_dir}/" 2>/dev/null || true
+    ok "已备份 ${gl_bai}${CONF_FILE}${reset}"
+  else
+    skip "无配置文件可备份"
+  fi
+  # 顺带保留历次重装产生的 .bak.* 备份
+  if ls "${INSTALL_DIR}"/*.bak.* >/dev/null 2>&1; then
+    cp -a "${INSTALL_DIR}"/*.bak.* "${backup_dir}/" 2>/dev/null || true
+    skip "已一并归档历史 .bak 备份"
+  fi
+
+  # 4) 删除安装目录
+  section "删除安装目录"
+  rm -rf "${INSTALL_DIR}" || error "删除安装目录失败：${INSTALL_DIR}"
+  ok "已删除 ${gl_bai}${INSTALL_DIR}${reset}"
+
+  # 5) 回收防火墙端口（以备份出来的配置里的端口为准）
+  section "回收防火墙端口"
+  conf_port="$(grep -o '"AdminWebListenPort"[[:space:]]*:[[:space:]]*[0-9]*' \
+               "${backup_dir}/${APP_NAME}.conf" 2>/dev/null | head -n 1 | grep -o '[0-9]*$' || true)"
+  [ -n "${conf_port}" ] || conf_port="${DEFAULT_PORT}"
+  close_firewall_port "${conf_port}"
+
+  sep_line
+  printf "  %s\n" "${gl_lv}✔ ${APP_NAME} 已彻底卸载${reset}"
+  printf "  %-14s %s\n" "${gl_lan}配置备份${reset}" "${gl_bai}${backup_dir}${reset}"
+  printf "  %-14s %s\n" "${gl_lan}已删除${reset}" "${gl_hui}${INSTALL_DIR}、${SERVICE_FILE}${reset}"
+  printf "  %-14s %s\n" "${gl_lan}确认无残留${reset}" "${gl_hui}systemctl status ${APP_NAME}（应提示 not found / inactive）${reset}"
+  printf "  %-14s %s\n" "${gl_lan}清理备份${reset}" "${gl_hui}确认无需回滚后：rm -rf ${backup_dir}${reset}"
+  sep_line
+  exit 0
+}
+
 # ===================== 参数解析 =====================
 # 支持 `bash -c "$(curl ...)" -p 16601`：此时 $0 = "-p"，需并回参数列表
 case "$0" in
@@ -145,16 +268,22 @@ while [ "$#" -gt 0 ]; do
     -y|--yes)
       INSTALL_YES=1
       ;;
+    -U|--uninstall)
+      DO_UNINSTALL=1
+      ;;
     -h|--help)
-      printf "%s\n" "${gl_lan}lucky${reset} - ${gl_bai}端口转发 / DDNS / 反向代理 网络工具 安装脚本${reset}"
-      printf "  %-13s %s\n" "${gl_bai}用法:${reset}" "bash scripts/install.sh [-p PORT] [-d DIR] [-v VERSION] [-y]"
+      printf "%s\n" "${gl_lan}lucky${reset} - ${gl_bai}端口转发 / DDNS / 反向代理 网络工具 安装/卸载脚本${reset}"
+      printf "  %-13s %s\n" "${gl_bai}安装:${reset}" "bash scripts/install.sh [-p PORT] [-d DIR] [-v VERSION] [-y]"
+      printf "  %-13s %s\n" "${gl_bai}卸载:${reset}" "bash scripts/install.sh --uninstall [-d DIR] [-y]"
       printf "  %-13s %s\n" "${gl_bai}-p, --port${reset}" "管理后台端口（默认 ${gl_lan}${DEFAULT_PORT}${reset}）"
       printf "  %-13s %s\n" "${gl_bai}-d, --dir${reset}" "安装目录（默认 ${gl_lan}${DEFAULT_INSTALL_DIR}${reset}）"
       printf "  %-13s %s\n" "${gl_bai}-v, --version${reset}" "指定版本（默认 ${gl_lan}latest${reset}）"
-      printf "  %-13s %s\n" "${gl_bai}-y, --yes${reset}" "免交互安装"
+      printf "  %-13s %s\n" "${gl_bai}-U, --uninstall${reset}" "彻底卸载（配置先备份到 /root/lucky-uninstall-backup-<时间戳>）"
+      printf "  %-13s %s\n" "${gl_bai}-y, --yes${reset}" "免交互（卸载时跳过 yes 确认）"
       printf "  %-13s %s\n" "${gl_bai}-h, --help${reset}" "显示本帮助"
       printf "%s\n" "${gl_hui}配置目录内的 lucky.conf 在重装时保留，仅替换二进制。${reset}"
       printf "%s\n" "${gl_hui}默认登录账号/密码：666 / 666，登录后请立即修改。${reset}"
+      printf "%s\n" "${gl_hui}当初若用 -d 指定过安装目录，卸载时需同样传入 -d。${reset}"
       exit 0
       ;;
     *)
@@ -165,6 +294,17 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ "$(id -u)" = "0" ] || error "请以 root 身份运行（例如 sudo bash scripts/install.sh）"
+
+# ===================== 路径派生（安装与卸载共用） =====================
+[ -n "${INSTALL_DIR}" ] || INSTALL_DIR="${DEFAULT_INSTALL_DIR}"
+BIN_PATH="${INSTALL_DIR}/${APP_NAME}"
+CONF_FILE="${INSTALL_DIR}/${APP_NAME}.conf"
+SERVICE_FILE="/etc/systemd/system/${APP_NAME}.service"
+
+# ===================== 卸载分支（不需要端口参数） =====================
+if [ "${DO_UNINSTALL}" = "1" ]; then
+  do_uninstall
+fi
 
 # ===================== 交互式补全端口 =====================
 if [ -z "${PORT}" ]; then
@@ -179,11 +319,6 @@ case "${PORT}" in
   ''|*[!0-9]*) error "端口必须为数字：${PORT}" ;;
 esac
 [ "${PORT}" -ge 1 ] && [ "${PORT}" -le 65535 ] || error "端口超出范围：${PORT}"
-
-[ -n "${INSTALL_DIR}" ] || INSTALL_DIR="${DEFAULT_INSTALL_DIR}"
-BIN_PATH="${INSTALL_DIR}/${APP_NAME}"
-CONF_FILE="${INSTALL_DIR}/${APP_NAME}.conf"
-SERVICE_FILE="/etc/systemd/system/${APP_NAME}.service"
 
 print_banner
 sep_line
