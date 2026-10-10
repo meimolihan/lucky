@@ -115,6 +115,15 @@ Lucky 的核心程序完全采用 Golang 实现，具有高效、稳定、跨平
 
 - [一键安装详看这里](https://github.com/gdy666/lucky-files)
 
+- Linux 一键脚本安装（自动识别架构，安装为 systemd 服务）
+
+  ```bash
+  bash -c "$(curl -sSL https://raw.githubusercontent.com/meimolihan/lucky/master/scripts/install.sh)" -p 16601
+  ```
+
+  可选参数：`-p 端口`（默认 16601）、`-d 安装目录`（默认 `/etc/lucky`）、`-v 版本`（默认 latest）、`-y` 免交互。
+  重装/升级直接再执行一次即可，`lucky.conf` 配置会保留。
+
 
 ## OpenwrtIPK包安装
 
@@ -144,16 +153,24 @@ Lucky 的核心程序完全采用 Golang 实现，具有高效、稳定、跨平
 
   ```bash
   # host模式, 同时支持IPv4/IPv6, Liunx系统推荐
-  docker run -d --name lucky --restart=always --net=host gdy666/lucky
+  docker run -d --name lucky --restart=always --net=host mobufan/lucky
   # 桥接模式, 只支持IPv4, Mac/Windows推荐,windows 不推荐使用docker版本
-  docker run -d --name lucky --restart=always -p 16601:16601 gdy666/lucky
+  docker run -d --name lucky --restart=always -p 16601:16601 mobufan/lucky
   ```
 
 - 在浏览器中打开`http://主机IP:16601`，修改你的配置，成功
 - [可选] 挂载主机目录, 删除容器后配置不会丢失。可替换 `/root/luckyconf` 为主机目录, 配置文件夹为lucky
 
   ```bash
-  docker run -d --name lucky --restart=always --net=host -v /root/luckyconf:/goodluck gdy666/lucky
+  docker run -d --name lucky --restart=always --net=host -v /root/luckyconf:/goodluck mobufan/lucky
+  ```
+
+- 镜像名：`mobufan/lucky`（标签：`latest` 与版本号，如 `v2.28.2`）
+- 自行构建镜像：
+
+  ```bash
+  bash scripts/docker-build-push.sh            # 本地构建 amd64
+  bash scripts/docker-build-push.sh --push     # 构建并推送到 Docker Hub（需先 docker login）
   ```
 
 
@@ -186,6 +203,8 @@ Lucky 的核心程序完全采用 Golang 实现，具有高效、稳定、跨平
       1. 移除管理界面内全部广告位与推广内容。
       2. 全局版本号更新至 v2.28.2。
       3. 开源仓库地址统一变更为 https://github.com/meimolihan/lucky
+      4. 新增 Linux 一键安装脚本 scripts/install.sh（自动识别架构，安装为 systemd 服务）。
+      5. Docker 镜像名统一变更为 mobufan/lucky，新增 scripts/docker-build-push.sh。
 
     2026-02-01 v2.27.2
       1. 重构并优化文件服务/WebDav 前端显示。

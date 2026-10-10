@@ -81,14 +81,25 @@ info "写入发版备注 RELEASE_NOTES.md"
   if [ -n "${MSG}" ]; then
     printf '%s\n\n' "${MSG}"
   fi
-  printf '## 一键安装\n\n'
+  printf '## 一键安装（Linux）\n\n'
   printf '```bash\n'
   printf 'bash -c "$(curl -sSL https://raw.githubusercontent.com/meimolihan/lucky/master/scripts/install.sh)" -p 16601\n'
   printf '```\n\n'
+  printf '可选参数：`-p 端口`（默认 16601）、`-d 安装目录`（默认 /etc/lucky）、`-v 版本`、`-y` 免交互。\n'
+  printf '重装/升级再执行一次即可，`lucky.conf` 配置保留。\n\n'
   printf '## Docker\n\n'
+  printf '镜像名：`mobufan/lucky`（标签 `latest` 与 `%s`）\n\n' "${TAG}"
   printf '```bash\n'
-  printf 'docker run -d --name lucky --restart=always --net=host meimolihan/lucky\n'
-  printf '```\n'
+  printf 'docker run -d --name lucky --restart=always --net=host mobufan/lucky:%s\n' "${TAG}"
+  printf '# 挂载配置目录，删除容器后配置不丢失\n'
+  printf 'docker run -d --name lucky --restart=always --net=host -v /root/luckyconf:/goodluck mobufan/lucky:%s\n' "${TAG}"
+  printf '```\n\n'
+  printf '自行构建镜像：\n\n'
+  printf '```bash\n'
+  printf 'bash scripts/docker-build-push.sh --arch amd64 --push   # 需先 docker login\n'
+  printf '```\n\n'
+  printf '## 默认凭据\n\n'
+  printf '后台地址 `http://<设备IP>:16601`，默认账号/密码 `666 / 666`，登录后请立即修改。\n'
 } > RELEASE_NOTES.md
 
 # ===================== 重复 Tag/Release 清理 =====================
